@@ -8,12 +8,14 @@
 
 #include <algorithm>
 #include <fcntl.h>
+#include <iomanip>
 #include <math.h>
 #include <sstream>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 using namespace std;
 
@@ -44,6 +46,24 @@ using namespace std;
 #define SRS_HLS_FLOOR_REAP_PERCENT 0.3
 // reset the piece id when deviation overflow this.
 #define SRS_JUMP_WHEN_PIECE_DEVIATION 20
+
+// Helper function to format microsecond timestamp to ISO 8601 format
+// Format: YYYY-MM-DDTHH:MM:SS.sssZ
+static string srs_format_iso8601_time(int64_t time_us)
+{
+    time_t seconds = time_us / 1000000;
+    int milliseconds = (time_us % 1000000) / 1000;
+    
+    struct tm tm_info;
+    gmtime_r(&seconds, &tm_info);
+    
+    char buffer[64];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &tm_info);
+    
+    std::stringstream ss;
+    ss << buffer << "." << std::setfill('0') << std::setw(3) << milliseconds << "Z";
+    return ss.str();
+}
 
 SrsHlsSegment::SrsHlsSegment(SrsTsContext *c, SrsAudioCodecId ac, SrsVideoCodecId vc, ISrsFileWriter *w)
 {
@@ -756,6 +776,12 @@ srs_error_t SrsHlsFmp4Muxer::segment_open(srs_utime_t basetime)
     // new segment.
     current_ = new SrsHlsM4sSegment(writer_);
     current_->sequence_no_ = sequence_no_++;
+    
+    // Record wall clock time when segment is created
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    int64_t wall_clock_us = (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+    current_->set_wall_clock_time(wall_clock_us);
 
     if ((err = write_hls_key()) != srs_success) {
         return srs_error_wrap(err, "write hls key");
@@ -1073,6 +1099,15 @@ srs_error_t SrsHlsFmp4Muxer::do_refresh_m3u8(std::string m3u8_file)
     // TODO: add #EXT-X-MAP:URI="init.mp4" for fmp4
     ss << "#EXT-X-MAP:URI=\"" << init_mp4_uri_ << "\"" << SRS_CONSTS_LF;
 
+    // Add EXT-X-PROGRAM-DATE-TIME before first segment only
+    if (segments_->size() > 0) {
+        SrsHlsM4sSegment *first_segment = dynamic_cast<SrsHlsM4sSegment *>(segments_->first());
+        int64_t wall_clock_time = first_segment->get_wall_clock_time();
+        if (wall_clock_time > 0) {
+            ss << "#EXT-X-PROGRAM-DATE-TIME:" << srs_format_iso8601_time(wall_clock_time) << SRS_CONSTS_LF;
+        }
+    }
+
     // write all segments
     for (int i = 0; i < segments_->size(); i++) {
         SrsHlsM4sSegment *segment = dynamic_cast<SrsHlsM4sSegment *>(segments_->at(i));
@@ -1115,6 +1150,9 @@ srs_error_t SrsHlsFmp4Muxer::do_refresh_m3u8_segment(SrsHlsM4sSegment *segment, 
 
         ss << "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=" << "\"" << key_path << "\",IV=0x" << hexiv << SRS_CONSTS_LF;
     }
+
+    // Note: EXT-X-PROGRAM-DATE-TIME is only added before the first segment in do_refresh_m3u8
+    // All subsequent segments' absolute time can be calculated by adding EXTINF durations
 
     // "#EXTINF:4294967295.208,\n"
     ss.precision(3);
@@ -1564,6 +1602,12 @@ srs_error_t SrsHlsMuxer::segment_open()
     // new segment.
     current_ = new SrsHlsSegment(context_, default_acodec, default_vcodec, writer_);
     current_->sequence_no_ = sequence_no_++;
+    
+    // Record wall clock time when segment is created
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    int64_t wall_clock_us = (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+    current_->set_wall_clock_time(wall_clock_us);
 
     if ((err = write_hls_key()) != srs_success) {
         return srs_error_wrap(err, "write hls key");
@@ -2006,6 +2050,15 @@ srs_error_t SrsHlsMuxer::do_refresh_m3u8(string m3u8_file)
 
     // TODO: add #EXT-X-MAP:URI="init.mp4" for fmp4
 
+    // Add EXT-X-PROGRAM-DATE-TIME before first segment only
+    if (segments_->size() > 0) {
+        SrsHlsSegment *first_segment = dynamic_cast<SrsHlsSegment *>(segments_->first());
+        int64_t wall_clock_time = first_segment->get_wall_clock_time();
+        if (wall_clock_time > 0) {
+            ss << "#EXT-X-PROGRAM-DATE-TIME:" << srs_format_iso8601_time(wall_clock_time) << SRS_CONSTS_LF;
+        }
+    }
+
     // write all segments
     for (int i = 0; i < segments_->size(); i++) {
         SrsHlsSegment *segment = dynamic_cast<SrsHlsSegment *>(segments_->at(i));
@@ -2048,6 +2101,9 @@ srs_error_t SrsHlsMuxer::do_refresh_m3u8_segment(SrsHlsSegment *segment, std::st
 
         ss << "#EXT-X-KEY:METHOD=AES-128,URI=" << "\"" << key_path << "\",IV=0x" << hexiv << SRS_CONSTS_LF;
     }
+
+    // Note: EXT-X-PROGRAM-DATE-TIME is only added before the first segment in do_refresh_m3u8
+    // All subsequent segments' absolute time can be calculated by adding EXTINF durations
 
     // "#EXTINF:4294967295.208,\n"
     ss.precision(3);

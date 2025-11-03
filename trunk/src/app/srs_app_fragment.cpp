@@ -28,6 +28,7 @@ SrsFragment::SrsFragment()
     start_dts_ = -1;
     sequence_header_ = false;
     number_ = 0;
+    wall_clock_time_ = 0;
 }
 
 SrsFragment::~SrsFragment()
@@ -170,6 +171,16 @@ uint64_t SrsFragment::number()
     return number_;
 }
 // LCOV_EXCL_STOP
+
+void SrsFragment::set_wall_clock_time(int64_t t)
+{
+    wall_clock_time_ = t;
+}
+
+int64_t SrsFragment::get_wall_clock_time()
+{
+    return wall_clock_time_;
+}
 
 ISrsFragmentWindow::ISrsFragmentWindow()
 {

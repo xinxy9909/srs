@@ -27,6 +27,8 @@ private:
     bool sequence_header;
     // The number of this segment, use in dash mpd.
     uint64_t number_;
+    // The wall clock time when segment was created (in microseconds since epoch)
+    int64_t wall_clock_time_;
 public:
     SrsFragment();
     virtual ~SrsFragment();
@@ -62,6 +64,9 @@ public:
     // Get or set the number of this fragment.
     virtual void set_number(uint64_t n);
     virtual uint64_t number();
+    // Get or set the wall clock time when segment was created.
+    virtual void set_wall_clock_time(int64_t t);
+    virtual int64_t get_wall_clock_time();
 };
 
 // The fragment window manage a series of fragment.

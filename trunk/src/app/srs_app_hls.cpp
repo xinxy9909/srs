@@ -12,7 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <unistd.h>
+#include <sys/time.h>
+#include <iomanip>
 #include <algorithm>
 #include <sstream>
 using namespace std;
@@ -44,6 +47,24 @@ using namespace std;
 #define SRS_HLS_FLOOR_REAP_PERCENT 0.3
 // reset the piece id when deviation overflow this.
 #define SRS_JUMP_WHEN_PIECE_DEVIATION 20
+
+// Helper function to format microsecond timestamp to ISO 8601 format
+// Format: YYYY-MM-DDTHH:MM:SS.sssZ
+static string srs_format_iso8601_time(int64_t time_us)
+{
+    time_t seconds = time_us / 1000000;
+    int milliseconds = (time_us % 1000000) / 1000;
+    
+    struct tm tm_info;
+    gmtime_r(&seconds, &tm_info);
+    
+    char buffer[64];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &tm_info);
+    
+    std::stringstream ss;
+    ss << buffer << "." << std::setfill('0') << std::setw(3) << milliseconds << "Z";
+    return ss.str();
+}
 
 SrsHlsSegment::SrsHlsSegment(SrsTsContext* c, SrsAudioCodecId ac, SrsVideoCodecId vc, SrsFileWriter* w)
 {
@@ -432,6 +453,12 @@ srs_error_t SrsHlsMuxer::segment_open()
     // new segment.
     current = new SrsHlsSegment(context, default_acodec, default_vcodec, writer);
     current->sequence_no = _sequence_no++;
+
+    // Record wall clock time when segment is created
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    int64_t wall_clock_us = (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+    current->set_wall_clock_time(wall_clock_us);
 
     if ((err = write_hls_key()) != srs_success) {
         return srs_error_wrap(err, "write hls key");
@@ -823,6 +850,13 @@ srs_error_t SrsHlsMuxer::_refresh_m3u8(string m3u8_file)
     int target_duration = (int)ceil(srsu2msi(srs_max(max_duration, max_td)) / 1000.0);
     
     ss << "#EXT-X-TARGETDURATION:" << target_duration << SRS_CONSTS_LF;
+    
+    // Add EXT-X-PROGRAM-DATE-TIME before first segment only
+    SrsHlsSegment* first_segment = dynamic_cast<SrsHlsSegment*>(segments->first());
+    int64_t wall_clock_time = first_segment->get_wall_clock_time();
+    if (wall_clock_time > 0) {
+        ss << "#EXT-X-PROGRAM-DATE-TIME:" << srs_format_iso8601_time(wall_clock_time) << SRS_CONSTS_LF;
+    }
     
     // write all segments
     for (int i = 0; i < segments->size(); i++) {
